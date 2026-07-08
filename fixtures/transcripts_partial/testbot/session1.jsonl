@@ -1,0 +1,2 @@
+{"type": "user", "timestamp": "2026-07-02T00:00:00.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "content": [{"type": "text", "text": "This fixture memory entry line should be found verbatim inside evidence."}]}]}}
+{"type": "user", "timestamp": "2026-07-02T00:01:00.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "content": [{"type": "text", "text": "This loneagent fixture line about scoping should never appear in evidence for testbot."}]}]}}

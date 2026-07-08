@@ -38,7 +38,7 @@ findings by rule: S2×14, S4×1, S5×1, S6×1
 
 S1 also emits a **near-cliff warning** (med severity) once a memory index or AGENTS.md crosses 90% of its load limit but hasn't been truncated yet — the point where trimming is still easy, before writes start silently failing.
 
-Every rule ships with golden fixtures (`fixtures/`, `tests/`) and is precision-tested on a live 4-agent fleet before release. LLM-assisted contradiction/junk/claim detection now ships as the opt-in `--llm` tier below (your own key, nothing runs by default). Roadmap: a usage tier that answers *"did this memory ever actually reach a prompt?"* via a local request tap.
+Every rule ships with golden fixtures (`fixtures/`, `tests/`) and is precision-tested on a live 4-agent fleet before release. LLM-assisted contradiction/junk/claim detection ships as the opt-in `--llm` tier below (your own key, nothing runs by default). A usage-evidence tier — *"did this memory ever actually reach a prompt?"* — now ships too, opt-in, described below.
 
 ## L-tier (opt-in) — `--llm`
 
@@ -79,6 +79,67 @@ Claude Code's own discovery-order docs are known to be internally inconsistent (
 python3 -m memory_doctor trace ~/my-project
 ```
 
+## U-tier (usage evidence) — `--evidence`, `compaction-audit`, `compliance`
+
+Every check above this line only reads the memory *files*. It can tell you a file is
+stale, duplicated, or truncated -- it cannot tell you whether the content ever actually
+reached a prompt. The U-tier answers that, by checking a local capture of real requests.
+It needs one of two evidence sources on disk; without either, these commands say so and
+do nothing else.
+
+**Evidence sources** (in preference order):
+
+- **prompttap body captures** — a local reverse-proxy tap in front of the Anthropic
+  Messages API, if you run one, writes one gzip JSON file per request to
+  `<prompttap_dir>/bodies/*.json.gz`. This is the literal API request body -- the
+  highest-precision evidence available. But it is typically rotated aggressively (a fixed
+  file-count cap), so the retained window is often just the last hour or two -- every
+  U-tier finding says exactly how many requests and since when, so you can judge whether
+  "never seen" means "genuinely unused" or "just outside a short window."
+- **Claude Code session transcripts** (`~/.claude/projects/<agent>/*.jsonl`) — not the
+  literal API request (Claude Code doesn't log that), but a stream of session events
+  (attachments, tool results, compaction markers) that reliably quotes file content
+  verbatim when a memory file was read or injected. Retention is whatever you kept on
+  disk -- usually much longer than prompttap's window, and in practice the more useful
+  source on a host where the tap has already rotated.
+
+```bash
+python3 -m memory_doctor --evidence auto        # add U1 findings using whichever source exists
+python3 -m memory_doctor --evidence /path/to/dir  # use a specific capture dir instead
+python3 -m memory_doctor compaction-audit         # R7: sessions with a runaway compaction count
+python3 -m memory_doctor compliance --evidence auto  # R6: rule -> loaded-in-evidence? table
+```
+
+| Rule / command | What it checks | What it can conclude | What it cannot conclude |
+|---|---|---|---|
+| **U1** (`--evidence`, R12) | for every always-loaded file and every memory entry, whether a distinctive content fingerprint ever shows up in the evidence window | an always-loaded file's content missing from *every single request in the window* is a likely wiring bug (med); a memory entry missing from the window is usage-evidence it wasn't needed there (low, "candidate for archive") | it is never proof of permanent non-use -- only of non-use *within the captured window*, which is why every finding states the window size and start date |
+| **U2** (`compaction-audit`, R7) | compaction-event count per session, from Claude Code's own `compact_boundary` markers | exact compaction count and token deltas per session; flags sessions with an unusually high count (>=20 by default, calibrated against the "211 compactions" openclaw#24179 runaway class) | the harder version -- "which specific always-loaded item vanished at *this* compaction boundary" -- was investigated and **not shipped**; see the judgment-call note below |
+| **compliance** (R6) | reuses S8's imperative-rule extractor (MUST/NEVER/ALWAYS/DO NOT/必须/不要/禁止) over always-loaded files; for each rule, whether its text appears in the evidence window | whether a rule's text was *present* in a captured prompt | whether the agent actually **obeyed** it -- that's a semantic judgment this module deliberately does not attempt. Every row's violation-check column reads `requires --llm (future) or manual review` on purpose; turning a rule into an enforced check is out of scope for a read-only auditor |
+
+**Judgment call: why the compaction "vanish check" wasn't shipped.** The R7 spec asks
+for something stronger than a frequency count: for each compaction, compare which
+always-loaded fingerprints were present right before it against right after, and flag
+anything that vanished. Real transcripts do log the compaction event itself with exact
+metadata (`trigger`, `preTokens`, `postTokens`, `durationMs`) -- but the only evidence
+proxies for "what was actually in the system prompt at that exact moment" are
+`nested_memory` attachments and tool-result file reads, which are sparse, harness-internal
+event logs, not a record of the literal request on every single API call. They don't
+reliably line up 1:1 with any one specific boundary. A present/after-vanish comparison
+built on them would be guessing dressed up as a measurement -- exactly what the precision
+doctrine says not to ship. The exact, certain half (compaction frequency) shipped instead;
+the vanish-check remains a documented gap, not a silent one.
+
+**Privacy / cost**: same as the rest of memory-doctor -- read-only, stdlib-only, no
+network calls. The U-tier reads capture files that already exist on your disk (written by
+a tap or by Claude Code itself); it does not create, modify, or transmit anything.
+
+### Codex and the U-tier
+
+`compliance` accepts `--adapter codex` the same way the main audit does. `--evidence` and
+`compaction-audit`, however, are Claude Code-specific: Codex has no equivalent local
+transcript or tap capture on this host, so there's nothing to check against for a Codex
+`AGENTS.md` today.
+
 ## Principles
 
 - **Local-first.** Reads your files, phones nothing home — except the opt-in `--llm` tier, which only ever talks to your own configured Anthropic endpoint, and only when you pass the flag.
@@ -88,6 +149,6 @@ python3 -m memory_doctor trace ~/my-project
 
 ## Status
 
-v0.1 — Claude Code + Codex adapters, static S-tier, and the opt-in LLM-assisted L-tier. Hermes / Mem0 / Zep adapters and the usage tier are next. Built from the failure taxonomy of a production agent-memory research project; issues with your own memory failure patterns are extremely welcome.
+v0.2 — Claude Code + Codex adapters, static S-tier, the opt-in LLM-assisted L-tier, and the opt-in usage-evidence U-tier (`--evidence`, `compaction-audit`, `compliance`). Hermes / Mem0 / Zep adapters are next. Built from the failure taxonomy of a production agent-memory research project; issues with your own memory failure patterns are extremely welcome.
 
 MIT license.

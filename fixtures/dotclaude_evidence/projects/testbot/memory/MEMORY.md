@@ -1,0 +1,2 @@
+- [seen entry](seen.md) - a fixture entry that appears in captured evidence
+- [unseen entry](unseen.md) - a fixture entry that never appears in evidence
