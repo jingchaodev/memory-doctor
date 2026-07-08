@@ -1,0 +1,7 @@
+memory-doctor · scanned 110 surfaces (96 memory entries, 13 agents) under ~/.claude
+========================================================================
+⚪ S5 · always-loaded layer ≈ 9,359 tokens across 14 file(s) — paid EVERY session
+     evidence: largest: CLAUDE.md (7,795ch); MEMORY.md (7,694ch); MEMORY.md (4,168ch)
+     fix: Anything an agent could look up on demand shouldn't ride in the always-loaded layer.
+========================================================================
+findings by rule: S5×1
