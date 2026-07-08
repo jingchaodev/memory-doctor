@@ -1,0 +1,5 @@
+- [pref tea](pref-tea.md) — beverage preference
+- [pref coffee](pref-coffee.md) — beverage preference
+- [todo](todo.md) — task
+- [rule](rule.md) — rule
+- [claim](claim.md) — claim

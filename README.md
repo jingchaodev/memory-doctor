@@ -38,7 +38,34 @@ findings by rule: S2×14, S4×1, S5×1, S6×1
 
 S1 also emits a **near-cliff warning** (med severity) once a memory index or AGENTS.md crosses 90% of its load limit but hasn't been truncated yet — the point where trimming is still easy, before writes start silently failing.
 
-Every rule ships with golden fixtures (`fixtures/`, `tests/`) and is precision-tested on a live 4-agent fleet before release. Roadmap: LLM-assisted contradiction detection (opt-in, your own key), and a usage tier that answers *"did this memory ever actually reach a prompt?"* via a local request tap.
+Every rule ships with golden fixtures (`fixtures/`, `tests/`) and is precision-tested on a live 4-agent fleet before release. LLM-assisted contradiction/junk/claim detection now ships as the opt-in `--llm` tier below (your own key, nothing runs by default). Roadmap: a usage tier that answers *"did this memory ever actually reach a prompt?"* via a local request tap.
+
+## L-tier (opt-in) — `--llm`
+
+```bash
+python3 -m memory_doctor --llm                        # adds LLM-assisted findings
+python3 -m memory_doctor --llm --llm-max-entries 50    # cap cost across the whole run
+```
+
+Everything above this line runs with zero dependencies and zero network calls. `--llm`
+adds three extra, judgment-based checks that a regex can't do — but they're advisory,
+not ground truth, so every finding is capped at **med/low severity** and its summary is
+always prefixed **"LLM-assisted"** so you can tell a probabilistic finding apart from a
+deterministic S-tier one at a glance.
+
+| Rule | What it catches |
+|---|---|
+| **L1 contradiction/supersession** | one prompt per agent, batching its memory entries, asks the model to find pairs that conflict or where a newer entry has clearly replaced an older one on the same subject |
+| **L1 junk/overgeneralization** | a second prompt classifies every entry (durable fact / preference / project state / transient task / system restatement / noise) and flags entries junk-classed, plus any absolute "always/never" rule whose own text shows it was generalized from a single dated incident |
+| **L2 verifiable-claim probe** | a third prompt extracts claims of the shape "path X exists" or "command Y is installed"; memory-doctor then verifies each **locally** (`Path.exists()` / `shutil.which()` — nothing else, ever) and flags the ones that don't hold. This catches claims S2's regex structurally can't see: bare command names and relative/tilde-less path mentions phrased in prose. |
+
+Privacy: this tier **only** runs when you pass `--llm`. It reads `ANTHROPIC_API_KEY`
+from your own environment (never a CLI flag, never logged, never written anywhere) and
+sends entry content only to your configured Anthropic endpoint — nowhere else. Missing
+key + `--llm` fails clean (exit 2) before any network call. Cost is bounded by
+`--llm-max-entries` (default 200) and a 500-char truncation per entry; exactly 3 LLM
+calls happen per agent that has entries within the cap. Any malformed or unparseable
+model response is skipped silently — it is never allowed to crash the audit.
 
 ### Codex support
 
@@ -54,13 +81,13 @@ python3 -m memory_doctor trace ~/my-project
 
 ## Principles
 
-- **Local-first.** Reads your files, phones nothing home.
+- **Local-first.** Reads your files, phones nothing home — except the opt-in `--llm` tier, which only ever talks to your own configured Anthropic endpoint, and only when you pass the flag.
 - **Read-only by default.** A future `--fix` will only ever propose diffs for you to approve.
 - **The audited auditor.** A memory linter you can't verify is just more vibes — every detector's precision is measured and published.
-- **Stdlib only.** No dependencies to trust.
+- **Stdlib only.** No dependencies to trust — including the LLM tier, which talks to the Anthropic API via `urllib`, no SDK.
 
 ## Status
 
-v0.0 — Claude Code adapter only. Hermes / Mem0 / Zep adapters and the usage tier are next. Built from the failure taxonomy of a production agent-memory research project; issues with your own memory failure patterns are extremely welcome.
+v0.1 — Claude Code + Codex adapters, static S-tier, and the opt-in LLM-assisted L-tier. Hermes / Mem0 / Zep adapters and the usage tier are next. Built from the failure taxonomy of a production agent-memory research project; issues with your own memory failure patterns are extremely welcome.
 
 MIT license.

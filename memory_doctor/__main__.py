@@ -14,11 +14,14 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import llm
 from .adapters import claude_code, codex
 from .detectors import run_all
+from .llm_detectors import l_tier
 from .trace import trace as run_trace
 
 SEV_ICON = {"high": "🔴", "med": "🟡", "low": "⚪"}
+SEV_RANK = {"high": 0, "med": 1, "low": 2}
 
 
 def audit_main(argv):
@@ -28,6 +31,13 @@ def audit_main(argv):
     ap.add_argument("--adapter", choices=["claude-code", "codex", "all"], default="claude-code",
                      help="which harness to scan (default: claude-code)")
     ap.add_argument("--md", metavar="FILE", help="write a markdown report")
+    ap.add_argument("--llm", action="store_true",
+                     help="enable opt-in LLM-assisted detectors (contradiction/junk/claim "
+                          "checks). Requires ANTHROPIC_API_KEY in the environment. Nothing "
+                          "leaves your machine unless this flag is passed.")
+    ap.add_argument("--llm-max-entries", type=int, default=200, metavar="N",
+                     help="cap how many memory entries are sent to the LLM across the whole "
+                          "run (default: 200)")
     a = ap.parse_args(argv)
 
     items = []
@@ -56,6 +66,15 @@ def audit_main(argv):
         print(f"no memory surfaces found ({', '.join(scanned) or a.adapter})", file=sys.stderr)
         sys.exit(1)
     findings = run_all(items)
+
+    if a.llm:
+        try:
+            client = llm.LLMClient()
+        except llm.LLMError as e:
+            print(f"--llm error: {e}", file=sys.stderr)
+            sys.exit(2)
+        findings += l_tier(items, client, a.llm_max_entries)
+        findings.sort(key=lambda f: (SEV_RANK[f.severity], f.rule))
 
     n_entries = sum(1 for i in items if i.kind == "memory_entry")
     n_agents = len({i.agent for i in items if i.kind not in ("claude_md", "agents_md")})
