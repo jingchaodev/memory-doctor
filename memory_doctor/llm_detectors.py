@@ -46,12 +46,17 @@ def _label(item):
     return item.path.name
 
 
+L_TIER_KINDS = ("memory_entry", "mem0_memory")
+
+
 def _capped_entries_by_agent(items, max_entries):
-    """Flatten every agent's memory_entry items in scan order, keep only the
-    first `max_entries` GLOBALLY (cost control across the whole run), then
-    regroup by agent. An agent whose entries all fall past the cap is simply
-    not sent to the LLM at all -- no partial/misleading judgment for it."""
-    all_entries = [it for it in items if it.kind == "memory_entry"]
+    """Flatten every agent's recallable-entry items (memory_entry, and Mem0's
+    mem0_memory -- D1: this pass is kind-agnostic on purpose, since both are the
+    same shape of thing: freeform text recalled on demand) in scan order, keep
+    only the first `max_entries` GLOBALLY (cost control across the whole run),
+    then regroup by agent. An agent whose entries all fall past the cap is
+    simply not sent to the LLM at all -- no partial/misleading judgment for it."""
+    all_entries = [it for it in items if it.kind in L_TIER_KINDS]
     capped = all_entries[:max_entries]
     by_agent = {}
     for it in capped:

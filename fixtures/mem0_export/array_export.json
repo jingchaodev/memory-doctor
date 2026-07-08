@@ -1,0 +1,45 @@
+[
+  {
+    "id": "dup-a",
+    "memory": "User prefers concise replies in Chinese chat and dark mode Telegram theme for all sessions.",
+    "user_id": "alice",
+    "created_at": "2026-05-01T09:00:00Z",
+    "metadata": {"category": "preference"}
+  },
+  {
+    "id": "dup-b",
+    "memory": "User prefers concise replies in Chinese chat and dark mode Telegram theme across sessions.",
+    "user_id": "alice",
+    "created_at": "2026-05-03T09:00:00Z",
+    "metadata": {"category": "preference"}
+  },
+  {
+    "id": "dead-path",
+    "memory": "The mem0 sync script lives at /root/nonexistent-mem0-sync-dir/sync.sh and runs nightly.",
+    "user_id": "alice",
+    "created_at": "2026-04-11T18:22:00Z"
+  },
+  {
+    "id": "relative-date-rot",
+    "memory": "Meeting on this topic was rescheduled to next week per the user's request.",
+    "user_id": "alice",
+    "created_at": "2026-06-20T08:00:00Z"
+  },
+  {
+    "id": "junk-looking-restatement",
+    "memory": "You are a helpful AI assistant that always answers concisely and follows the system instructions provided.",
+    "user_id": "alice",
+    "created_at": "2026-03-02T00:00:00Z"
+  },
+  {
+    "id": "healthy-control-1",
+    "memory": "User's favorite editor is Neovim; keeps a minimalist dotfiles repo.",
+    "user_id": "alice",
+    "created_at": "2026-06-30T00:00:00Z"
+  },
+  {
+    "id": "no-memory-field",
+    "user_id": "alice",
+    "created_at": "2026-06-30T00:00:00Z"
+  }
+]

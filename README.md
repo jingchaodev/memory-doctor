@@ -7,6 +7,7 @@ Your coding agent remembers things. Some of what it remembers is wrong: paths th
 ```bash
 python3 -m memory_doctor                 # audits ~/.claude — read-only, local, nothing leaves your machine
 python3 -m memory_doctor --adapter codex # audits ~/.codex/AGENTS.md instead
+python3 -m memory_doctor --adapter mem0 PATH  # audits a Mem0 JSON export (EXPERIMENTAL, see below)
 python3 -m memory_doctor trace /path/to/project   # what would ACTUALLY load for this cwd
 ```
 
@@ -140,6 +141,69 @@ a tap or by Claude Code itself); it does not create, modify, or transmit anythin
 transcript or tap capture on this host, so there's nothing to check against for a Codex
 `AGENTS.md` today.
 
+## Mem0 export audit (EXPERIMENTAL) — `--adapter mem0`
+
+**EXPERIMENTAL.** Everything in this section is designed purely against Mem0's
+*documented* export/API shapes — there is no Mem0 (mem0ai/mem0) installation on this
+host, and none of it has ever run against a live store or a real user's export. Every
+other precision claim in this README is measured (fixture or live fleet); this one is
+not. Treat its findings as a starting point for manual review, not ground truth.
+
+Motivation: an independent audit of a 10,134-entry production Mem0 store found **97.8%
+was junk** (mem0#4573) — restated system prompts, transient chatter, and other noise
+persisted as if it were durable fact. `--adapter mem0` lets you point the existing
+static detectors, plus three new Mem0-specific ones, at your own export to get a first
+read on the same failure class.
+
+```bash
+# export your memories first (Mem0 SDK, run wherever your Mem0 client lives):
+#   import json
+#   from mem0 import MemoryClient
+#   data = MemoryClient().get_all()   # or .get_all(user_id=...) etc.
+#   json.dump(data, open("export.json", "w"))
+
+python3 -m memory_doctor --adapter mem0 export.json        # a single export file
+python3 -m memory_doctor --adapter mem0 ./exports/          # or a directory of them
+```
+
+The adapter accepts either documented shape — a bare JSON array of memory objects, or
+the `get_all()` envelope `{"results": [...]}` — and merges every `*.json` file when
+given a directory. Per-object fields (`id`, `memory`, `user_id`/`agent_id`,
+`created_at`/`updated_at`, `metadata`, `hash`, `score`) are mapped defensively: every
+field is optional, and a malformed file or an unrecognized top-level shape degrades to
+"no items from that file," never a crash.
+
+**What runs on mem0 items:**
+
+| Rule | Applies to mem0? | Notes |
+|---|---|---|
+| S2 dead-references | yes, unchanged | path/kind-agnostic already |
+| S3 near-duplicates | yes, generalized | scope widened from `memory_entry` only to `("memory_entry", "mem0_memory")` — both are the same shape of thing (freeform text recalled on demand) |
+| S6 date-rot | yes, generalized | same widening as S3 |
+| S9 poisoning/scaffold scan | yes, generalized | same widening as S3 |
+| S1, S4, S5, S7, S8 | **no, not forced** | these assume an always-loaded/indexed-file model (load cliffs, index files, imperative-rule files) that doesn't map onto Mem0's recalled-on-demand memory objects |
+| `--llm` L-tier | yes | `_capped_entries_by_agent` was widened the same way as S3/S6/S9 for this batch — before, the cap/grouping pass only looked at `kind == "memory_entry"`, so mem0 items were silently excluded from every LLM prompt even with `--llm` on. That's fixed now: L1/L2 run over mem0 items exactly like Claude Code memory entries. |
+
+**New Mem0-specific checks (registered only when the scan contains ≥1 `mem0_memory` item):**
+
+| Rule | What it catches | What it can conclude | What it CANNOT conclude |
+|---|---|---|---|
+| **M1 ghost-suspects** | an object whose own `metadata` marks it deleted/removed, yet it's still sitting in the export | this one, specific, self-contradictory record | this is only the export-visible half of R9's cross-store ghost check — Mem0 can back a single logical memory with a vector store, a graph store, and an entity table, and a leftover ghost that isn't flagged in its own metadata is invisible from a static export. A full check needs live access to every backing store. |
+| **M2 subject-conflict** (R10, lite) | two-or-more objects for the same agent sharing an explicit `metadata.subject` or `metadata.entity` value, but with different memory text | a same-subject group with textually different content, worth a human look | which value is current — this rule doesn't rank or timestamp-compare; and if the export carries **no** `subject`/`entity` field at all, this check emits nothing rather than guess at what "same subject" means from free text (precision over coverage, required by spec) |
+| **M3 attribution smell** | memory text opening in assistant voice ("I recommend...", "You should...", "As an AI...") stored as if it were a durable user fact — mem0#5642's class | that the text reads as assistant-voice | who it *should* be attributed to, or whether it's actually wrong — a human still has to look |
+
+**Explicitly not shipped — R11 (round-trip probes).** The spec's round-trip check (write
+a canary memory, read it back through the Mem0 API, confirm fidelity) requires a live,
+writable Mem0 store to run against. This project is read-only by design and has no such
+store available, so R11 is **not implemented** here — faking it against static fixtures
+would just be theater. If you have a live store, the honest way to get this signal today
+is to write a canary through your own Mem0 client and diff the read-back yourself.
+
+**Fixtures**: `fixtures/mem0_export/` (both documented shapes, one planted hit per rule
+above) and `fixtures/mem0_export_malformed/` / `fixtures/mem0_export_no_subject/` for the
+defensive-parsing and "no subject field → M2 stays silent" cases. `tests/test_mem0.py`
+and `tests/test_mem0_checks.py` cover all of it.
+
 ## Principles
 
 - **Local-first.** Reads your files, phones nothing home — except the opt-in `--llm` tier, which only ever talks to your own configured Anthropic endpoint, and only when you pass the flag.
@@ -149,6 +213,6 @@ transcript or tap capture on this host, so there's nothing to check against for 
 
 ## Status
 
-v0.2 — Claude Code + Codex adapters, static S-tier, the opt-in LLM-assisted L-tier, and the opt-in usage-evidence U-tier (`--evidence`, `compaction-audit`, `compliance`). Hermes / Mem0 / Zep adapters are next. Built from the failure taxonomy of a production agent-memory research project; issues with your own memory failure patterns are extremely welcome.
+v0.3 — Claude Code + Codex adapters, static S-tier, the opt-in LLM-assisted L-tier, the opt-in usage-evidence U-tier (`--evidence`, `compaction-audit`, `compliance`), and an experimental Mem0 export adapter (`--adapter mem0`, M1-M3 checks — unmeasured against a live store, see the Mem0 section above). Hermes / Zep adapters are next. Built from the failure taxonomy of a production agent-memory research project; issues with your own memory failure patterns are extremely welcome.
 
 MIT license.

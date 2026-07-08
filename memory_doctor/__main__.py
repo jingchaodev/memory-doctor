@@ -5,6 +5,7 @@ Usage:
   python3 -m memory_doctor /path/to/.claude   # audit another root
   python3 -m memory_doctor --adapter codex    # audit ~/.codex/AGENTS.md instead
   python3 -m memory_doctor --adapter all      # audit both harnesses
+  python3 -m memory_doctor --adapter mem0 PATH  # audit a Mem0 JSON export (EXPERIMENTAL)
   python3 -m memory_doctor --md report.md     # also write a markdown report
   python3 -m memory_doctor --evidence auto    # add U1 usage-evidence findings (opt-in)
   python3 -m memory_doctor trace [cwd]        # print what would actually load for cwd
@@ -19,7 +20,9 @@ from pathlib import Path
 
 from . import evidence as evidence_mod
 from . import llm
+from . import mem0_checks
 from .adapters import claude_code, codex
+from .adapters import mem0 as mem0_adapter
 from .detectors import run_all
 from .llm_detectors import l_tier
 from .trace import trace as run_trace
@@ -31,9 +34,11 @@ SEV_RANK = {"high": 0, "med": 1, "low": 2}
 def audit_main(argv):
     ap = argparse.ArgumentParser(prog="memory-doctor", description=__doc__)
     ap.add_argument("root", nargs="?", default=None,
-                     help="root to scan (default: ~/.claude, or ~/.codex for --adapter codex)")
-    ap.add_argument("--adapter", choices=["claude-code", "codex", "all"], default="claude-code",
-                     help="which harness to scan (default: claude-code)")
+                     help="root to scan (default: ~/.claude, or ~/.codex for --adapter codex; "
+                          "REQUIRED for --adapter mem0 -- a JSON export file or a directory of them)")
+    ap.add_argument("--adapter", choices=["claude-code", "codex", "all", "mem0"], default="claude-code",
+                     help="which harness to scan (default: claude-code). 'mem0' is EXPERIMENTAL "
+                          "(see README) and requires the positional root.")
     ap.add_argument("--md", metavar="FILE", help="write a markdown report")
     ap.add_argument("--llm", action="store_true",
                      help="enable opt-in LLM-assisted detectors (contradiction/junk/claim "
@@ -73,10 +78,34 @@ def audit_main(argv):
         elif a.adapter == "codex":
             print(f"no codex root found at {cx_root}", file=sys.stderr)
 
+    if a.adapter == "mem0":
+        # EXPERIMENTAL (see README) -- unlike claude-code/codex there is no sensible
+        # default location for a Mem0 export, so the positional root is required and
+        # a missing/nonexistent path is a clean, immediate error rather than a silent
+        # empty scan.
+        if not a.root:
+            print("--adapter mem0 requires a path to a JSON export file or a directory "
+                  "of them (positional argument) -- e.g. "
+                  "`python3 -m memory_doctor --adapter mem0 fixtures/mem0_export`",
+                  file=sys.stderr)
+            sys.exit(1)
+        m0_root = Path(a.root).expanduser()
+        if not m0_root.exists():
+            print(f"--adapter mem0: no such path: {m0_root}", file=sys.stderr)
+            sys.exit(1)
+        items += mem0_adapter.scan(m0_root)
+        scanned.append(f"mem0:{m0_root}")
+
     if not items:
         print(f"no memory surfaces found ({', '.join(scanned) or a.adapter})", file=sys.stderr)
         sys.exit(1)
     findings = run_all(items)
+
+    if any(it.kind == "mem0_memory" for it in items):
+        # EXPERIMENTAL mem0-specific checks (D2/R9/R10 fixture-level), registered
+        # only when mem0 items are actually present in this run.
+        findings += mem0_checks.run_all(items)
+        findings.sort(key=lambda f: (SEV_RANK[f.severity], f.rule))
 
     if a.llm:
         try:
@@ -97,7 +126,7 @@ def audit_main(argv):
             findings += evidence_mod.u1_never_loaded(items, win)
             findings.sort(key=lambda f: (SEV_RANK[f.severity], f.rule))
 
-    n_entries = sum(1 for i in items if i.kind == "memory_entry")
+    n_entries = sum(1 for i in items if i.kind in ("memory_entry", "mem0_memory"))
     n_agents = len({i.agent for i in items if i.kind not in ("claude_md", "agents_md")})
     print(f"memory-doctor · scanned {len(items)} surfaces "
           f"({n_entries} memory entries, {n_agents} agents) — {', '.join(scanned)}")

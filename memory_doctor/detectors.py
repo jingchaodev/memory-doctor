@@ -136,13 +136,30 @@ def s2_dead_references(items):
 
 
 # ---------- S3 · duplicate / near-duplicate entries ----------
+# Generalized (D1/mem0): recallable content lives under more than one kind now --
+# a Claude Code memory_entry and a Mem0 mem0_memory are the same shape of thing
+# (freeform recalled-on-demand text), so both are in scope for duplicate detection.
+S3_KINDS = ("memory_entry", "mem0_memory")
+
+
 def _tokens(text):
     return set(re.findall(r"[a-z一-鿿]{3,}", text.lower()))
 
 
+def _dup_label(it):
+    """Human-readable label for an S3 summary. memory_entry is one-file-per-entry
+    so path.name is already unique; mem0_memory packs many objects into one export
+    file, so path.name alone would collide (two different records both printing
+    as "array_export.json") -- disambiguate with the object's own mem0 id."""
+    if it.kind == "mem0_memory":
+        mid = it.meta.get("mem0_id")
+        return f"{it.path.name}#{mid}" if mid not in (None, "") else it.id
+    return it.path.name
+
+
 def s3_duplicates(items):
     out = []
-    entries = [it for it in items if it.kind == "memory_entry"]
+    entries = [it for it in items if it.kind in S3_KINDS]
     seen = set()
     for i in range(len(entries)):
         for j in range(i + 1, len(entries)):
@@ -157,7 +174,7 @@ def s3_duplicates(items):
                 seen.add((a.id, b.id))
                 out.append(Finding(
                     rule="S3", severity="low", item_id=a.id,
-                    summary=f"[{a.agent}] near-duplicate entries: {a.path.name} ≈ {b.path.name} "
+                    summary=f"[{a.agent}] near-duplicate entries: {_dup_label(a)} ≈ {_dup_label(b)} "
                             f"(similarity {jac:.0%})",
                     suggestion="Merge into one entry; duplicates drift apart and later contradict.",
                 ))
@@ -228,11 +245,15 @@ RELATIVE_RE = re.compile(r"(next week|tomorrow|later this (week|month)|下周|�
 STALE_DAYS = 365
 
 
+S6_KINDS = ("memory_entry", "claude_md", "import", "mem0_memory")
+S6_STALE_CHECK_KINDS = ("memory_entry", "mem0_memory")
+
+
 def s6_date_rot(items, today=None):
     today = today or date.today()
     out = []
     for it in items:
-        if it.kind not in ("memory_entry", "claude_md", "import"):
+        if it.kind not in S6_KINDS:
             continue
         rel = RELATIVE_RE.findall(it.text)
         if rel:
@@ -245,7 +266,7 @@ def s6_date_rot(items, today=None):
             ))
         dates = [date(*map(int, d.split("-"))) for d in DATE_RE.findall(it.text)
                  if int(d[:4]) >= 2020]
-        if dates and it.kind == "memory_entry":
+        if dates and it.kind in S6_STALE_CHECK_KINDS:
             newest = max(dates)
             if (today - newest).days > STALE_DAYS:
                 out.append(Finding(
@@ -399,7 +420,7 @@ def s9_poisoning(items):
             for tok in CONTROL_TOKENS:
                 if tok in line:
                     tokens_found.add(tok)
-            if it.kind == "memory_entry" and INJECTION_RE.search(line):
+            if it.kind in ("memory_entry", "mem0_memory") and INJECTION_RE.search(line):
                 injection_lines.append(line.strip())
             if STAGING_RE.search(line):
                 staging_lines.append(line.strip())
