@@ -204,6 +204,17 @@ above) and `fixtures/mem0_export_malformed/` / `fixtures/mem0_export_no_subject/
 defensive-parsing and "no subject field → M2 stays silent" cases. `tests/test_mem0.py`
 and `tests/test_mem0_checks.py` cover all of it.
 
+## Measured precision (field test, 2026-07-08, live 13-agent fleet)
+
+| Tier | Result | Notes |
+|---|---|---|
+| L1 supersession | **3/3 correct** | all three flagged pairs were genuine stale-vs-newer conflicts, human-verified |
+| L1 junk classification | ~5/7 useful | all low severity; "restates instruction files" hits were accurate, two debatable |
+| L2 claim probe | 1/3 on first run → **two FP classes fixed** | relative-path claims now skipped (no known base); command misses demoted to low + hedged ("fail2ban" missed while `fail2ban-client` existed) |
+
+This table is the product promise: every rule's precision gets measured on real data and the
+failure modes get fixed or the rule gets demoted — findings you can't trust are worse than no findings.
+
 ## Principles
 
 - **Local-first.** Reads your files, phones nothing home — except the opt-in `--llm` tier, which only ever talks to your own configured Anthropic endpoint, and only when you pass the flag.

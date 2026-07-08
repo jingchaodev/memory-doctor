@@ -164,8 +164,13 @@ class TestL2ClaimProbe(unittest.TestCase):
         self.assertEqual(len(findings), 2)
         for f in findings:
             self.assertEqual(f.rule, "L2")
-            self.assertEqual(f.severity, "med")
-            self.assertIn("doesn't exist", f.summary)
+            # field-test precision fix: path miss = med, command miss = low + hedged
+            if f.evidence.startswith("path_exists"):
+                self.assertEqual(f.severity, "med")
+                self.assertIn("doesn't exist", f.summary)
+            else:
+                self.assertEqual(f.severity, "low")
+                self.assertIn("not on PATH", f.summary)
 
     def test_existing_command_not_flagged(self):
         fake = FakeClient([json.dumps([

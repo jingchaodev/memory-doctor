@@ -239,6 +239,11 @@ def _verify_claim(kind, target):
     if not isinstance(target, str) or not target or not SAFE_TARGET_RE.match(target):
         return None
     if kind == "path_exists":
+        # Field-test lesson (2026-07-08): relative paths have no known base here —
+        # checking them against cwd produced a false "doesn't exist" on a file that
+        # lives under a wiki root. Only absolute or ~ paths are verifiable.
+        if not (target.startswith("/") or target.startswith("~")):
+            return None
         try:
             return Path(target).expanduser().exists()
         except Exception:
@@ -273,14 +278,26 @@ def l2_claim_probe(items, client, max_entries=DEFAULT_MAX_ENTRIES):
             target = row.get("target")
             result = _verify_claim(kind, target)
             if result is False:
-                noun = "path" if kind == "path_exists" else "command"
-                out.append(Finding(
-                    rule="L2", severity="med", item_id=item.id,
-                    summary=(f"[{agent}] {item.path.name}: LLM-assisted: memory claims "
-                             f"{noun} \"{target}\" but it doesn't exist"),
-                    evidence=f"{kind}: {target}",
-                    suggestion=f"Verify and update or delete this entry -- the referenced {noun} is gone.",
-                ))
+                if kind == "command_exists":
+                    # Field-test lesson (2026-07-08): "fail2ban" missed while
+                    # fail2ban-client existed — a which() miss only proves the exact
+                    # name isn't on PATH. Low severity, hedged wording.
+                    out.append(Finding(
+                        rule="L2", severity="low", item_id=item.id,
+                        summary=(f"[{agent}] {item.path.name}: LLM-assisted: command "
+                                 f"\"{target}\" not on PATH under that exact name — may be "
+                                 f"renamed (e.g. a -client/-ctl variant) or genuinely gone"),
+                        evidence=f"{kind}: {target}",
+                        suggestion="Check for a variant binary name before deleting the entry.",
+                    ))
+                else:
+                    out.append(Finding(
+                        rule="L2", severity="med", item_id=item.id,
+                        summary=(f"[{agent}] {item.path.name}: LLM-assisted: memory claims "
+                                 f"path \"{target}\" but it doesn't exist"),
+                        evidence=f"{kind}: {target}",
+                        suggestion="Verify and update or delete this entry -- the referenced path is gone.",
+                    ))
     return out
 
 
