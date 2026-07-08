@@ -1,0 +1,46 @@
+# Rules
+
+- MUST keep replies short.
+- NEVER ship a change without running the full test suite end to end, verifying every single edge case across all supported input types, confirming the CI pipeline is fully green across all supported platforms and architectures, and then double checking the deploy logs by hand before telling anyone the release is actually safe to go out the door today.
+- ALWAYS read the file first. Then check the diff. Then run the tests before committing.
+- MUST complete filler task 0.
+- MUST complete filler task 1.
+- MUST complete filler task 2.
+- MUST complete filler task 3.
+- MUST complete filler task 4.
+- MUST complete filler task 5.
+- MUST complete filler task 6.
+- MUST complete filler task 7.
+- MUST complete filler task 8.
+- MUST complete filler task 9.
+- MUST complete filler task 10.
+- MUST complete filler task 11.
+- MUST complete filler task 12.
+- MUST complete filler task 13.
+- MUST complete filler task 14.
+- MUST complete filler task 15.
+- MUST complete filler task 16.
+- MUST complete filler task 17.
+- MUST complete filler task 18.
+- MUST complete filler task 19.
+- MUST complete filler task 20.
+- MUST complete filler task 21.
+- MUST complete filler task 22.
+- MUST complete filler task 23.
+- MUST complete filler task 24.
+- MUST complete filler task 25.
+- MUST complete filler task 26.
+- MUST complete filler task 27.
+- MUST complete filler task 28.
+- MUST complete filler task 29.
+- MUST complete filler task 30.
+- MUST complete filler task 31.
+- MUST complete filler task 32.
+- MUST complete filler task 33.
+- MUST complete filler task 34.
+- MUST complete filler task 35.
+- MUST complete filler task 36.
+- MUST complete filler task 37.
+- MUST complete filler task 38.
+- MUST complete filler task 39.
+- MUST complete filler task 40.

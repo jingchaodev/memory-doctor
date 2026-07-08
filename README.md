@@ -33,6 +33,10 @@ findings by rule: S2×14, S4×1, S5×1, S6×1
 | **S5 bloat profile** | token cost of the always-loaded layer | you pay it every single session |
 | **S6 date-rot** | relative dates ("next week") + year-old facts | meaningless or expired at recall time |
 | **S7 staleness-by-neglect** | an always-loaded instruction file untouched for 90+ days while memory keeps changing | rules nobody has revisited may no longer hold |
+| **S8 rule-density lint** | imperative rules (MUST/NEVER/ALWAYS/DO NOT/必须/不要/禁止) that run past ~1 sentence, or a single always-loaded file with 40+ of them | verbose rules are observably ignored; large rule counts dilute attention |
+| **S9 poisoning/scaffold scan** | chat-template control tokens, instruction-injection-shaped text, or staging markers leaked into memory | a stray `<|im_start|>` or "ignore previous instructions" in durable memory can self-reinforce into a poisoning loop |
+
+S1 also emits a **near-cliff warning** (med severity) once a memory index or AGENTS.md crosses 90% of its load limit but hasn't been truncated yet — the point where trimming is still easy, before writes start silently failing.
 
 Every rule ships with golden fixtures (`fixtures/`, `tests/`) and is precision-tested on a live 4-agent fleet before release. Roadmap: LLM-assisted contradiction detection (opt-in, your own key), and a usage tier that answers *"did this memory ever actually reach a prompt?"* via a local request tap.
 

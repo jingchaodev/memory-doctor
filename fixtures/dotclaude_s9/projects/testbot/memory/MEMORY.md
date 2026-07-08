@@ -1,0 +1,4 @@
+- [injected](injected.md) — flagged example
+- [staged](staged.md) — flagged example
+- [fenced_safe](fenced_safe.md) — should NOT flag (fenced)
+- [clean](clean.md) — should NOT flag

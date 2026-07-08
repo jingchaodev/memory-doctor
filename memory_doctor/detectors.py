@@ -19,10 +19,51 @@ TOKEN_PER_CHAR = 0.4  # rough estimate good enough for bloat profiling
 # Generalized (R1): any item whose loaded_portion < 1.0 is a truncation candidate.
 # Wording is driven by kind since each harness's cliff is measured differently
 # (Claude Code auto-memory: 200 lines/25KB; Codex AGENTS.md: 32KB bytes).
+#
+# R13 static half — near-cliff warning: an item that hasn't been truncated YET
+# (loaded_portion == 1.0) but is already ≥90% of either limit is a silent-failure
+# waiting to happen — the next few writes may cross the cliff with no warning, or
+# (per hermes#32064 / letta#3151) an at-capacity write may simply be dropped.
+NEAR_CLIFF_RATIO = 0.90
+MEMORY_INDEX_MAX_LINES = 200
+MEMORY_INDEX_MAX_BYTES = 25 * 1024
+AGENTS_MD_MAX_BYTES = 32 * 1024
+
+
 def s1_load_truncation(items):
     out = []
     for it in items:
         if it.loaded_portion >= 1.0:
+            if it.kind == "memory_index":
+                total_lines = len(it.text.splitlines())
+                total_bytes = len(it.text.encode())
+                ratio = max(total_lines / MEMORY_INDEX_MAX_LINES,
+                            total_bytes / MEMORY_INDEX_MAX_BYTES)
+                if ratio >= NEAR_CLIFF_RATIO:
+                    out.append(Finding(
+                        rule="S1", severity="med", item_id=it.id,
+                        summary=f"[{it.agent}] MEMORY.md is {total_lines} lines / {total_bytes:,} bytes "
+                                f"({ratio:.0%} of the load cliff) — approaching the load cliff: new "
+                                f"entries will soon silently stop loading, and at-capacity writes may "
+                                f"be dropped",
+                        evidence=f"lines={total_lines}/{MEMORY_INDEX_MAX_LINES}, "
+                                 f"bytes={total_bytes:,}/{MEMORY_INDEX_MAX_BYTES:,}",
+                        suggestion="Trim now, before the cliff bites — move older entries into "
+                                   "per-topic files while there's still room to do it cleanly.",
+                    ))
+            elif it.kind == "agents_md":
+                total_bytes = len(it.text.encode())
+                ratio = total_bytes / AGENTS_MD_MAX_BYTES
+                if ratio >= NEAR_CLIFF_RATIO:
+                    out.append(Finding(
+                        rule="S1", severity="med", item_id=it.id,
+                        summary=f"[{it.agent}] {it.path.name} is {total_bytes:,} bytes "
+                                f"({ratio:.0%} of the 32KB cliff) — approaching the load cliff: new "
+                                f"entries will soon silently stop loading, and at-capacity writes may "
+                                f"be dropped",
+                        evidence=f"bytes={total_bytes:,}/{AGENTS_MD_MAX_BYTES:,}",
+                        suggestion="Trim AGENTS.md now, before content starts silently dropping.",
+                    ))
             continue
         if it.kind == "memory_index":
             total = len(it.text.splitlines())
@@ -255,8 +296,146 @@ def s7_neglect(items, now=None):
     return out
 
 
+# ---------- S8 · rule-density lint (R3) ----------
+# Evidence: HN 48160604 / 47144537 (imperative rules beyond ~1 sentence are
+# observably ignored), hermes#47349 (70+ entries, 14K chars burned per turn),
+# openclaw#92451 (instruction-count regression dilutes attention).
+# Scope: only the always-loaded instruction surfaces — this is about the rules
+# an agent is FORCED to read every single session, not memory it recalls on demand.
+S8_KINDS = ("claude_md", "import", "agents_md")
+IMPERATIVE_RE = re.compile(r"\b(?:MUST|NEVER|ALWAYS)\b|DO NOT|必须|不要|禁止", re.I)
+BULLET_OR_NUMBERED_RE = re.compile(r"^\s*(?:[-*]\s+|\d+[.)]\s+)(.*)$")
+SENTENCE_END_RE = re.compile(r"[.!?。！？]+(?:\s|$)")
+RULE_MAX_CHARS = 300
+RULE_MAX_SENTENCES = 2
+FILE_MAX_RULES = 40
+
+
+def _imperative_rules(text):
+    """Return the body text of every bullet/numbered line that contains an
+    imperative marker (MUST/NEVER/ALWAYS/DO NOT/必须/不要/禁止). Kept simple by
+    design: presence of the marker is the whole test, no NLP."""
+    rules = []
+    for line in text.splitlines():
+        m = BULLET_OR_NUMBERED_RE.match(line)
+        if not m:
+            continue
+        body = m.group(1).strip()
+        if body and IMPERATIVE_RE.search(body):
+            rules.append(body)
+    return rules
+
+
+def s8_rule_density(items):
+    out = []
+    for it in items:
+        if it.kind not in S8_KINDS or not it.always_loaded:
+            continue
+        rules = _imperative_rules(it.text)
+        for r in rules:
+            n_sentences = len(SENTENCE_END_RE.findall(r))
+            if len(r) > RULE_MAX_CHARS or n_sentences > RULE_MAX_SENTENCES:
+                quoted = r[:60] + ("…" if len(r) > 60 else "")
+                out.append(Finding(
+                    rule="S8", severity="low", item_id=it.id,
+                    summary=f"[{it.agent}] {it.path.name}: imperative rule runs long "
+                            f"({len(r)} chars, ~{n_sentences} sentences) — \"{quoted}\"",
+                    evidence=r[:200] + ("…" if len(r) > 200 else ""),
+                    suggestion="Rules beyond ~1 sentence are observably ignored in the field — "
+                               "trim to a single imperative clause.",
+                ))
+        if len(rules) > FILE_MAX_RULES:
+            out.append(Finding(
+                rule="S8", severity="med", item_id=it.id,
+                summary=f"[{it.agent}] {it.path.name}: {len(rules)} imperative rules in one "
+                        f"always-loaded file — attention dilution territory",
+                evidence=f"imperative rule count={len(rules)} (threshold {FILE_MAX_RULES})",
+                suggestion="Consolidate or move lower-priority rules out of the always-loaded layer; "
+                           "large rule counts are observed to regress instruction-following.",
+            ))
+    return out
+
+
+# ---------- S9 · poisoning / scaffold scan (L3 static subset) ----------
+# Evidence: openclaw#69943 (unsanitized chat-template control tokens written into
+# durable memory create a self-reinforcing poisoning loop), openclaw#80613
+# (staging-scaffold markers promoted into MEMORY.md).
+# NOTE (openclaw#80613 lesson): dedup/near-duplicate logic elsewhere (S3 above)
+# must stay locale-aware — ASCII-only matching misses CJK near-dupes. S9 doesn't
+# do similarity matching, but any future edit to S3/S9 must keep that in mind.
+CONTROL_TOKENS = ["<|im_start|>", "<|im_end|>", "<|endoftext|>", "[INST]", "<<SYS>>", "</s>"]
+INJECTION_RE = re.compile(
+    r"ignore (?:all |the )?(?:previous|prior|above) instructions"
+    r"|disregard .{0,20}instructions"
+    r"|you must now"
+    r"|new system prompt",
+    re.I,
+)
+FENCE_RE = re.compile(r"^\s*```")
+STAGING_RE = re.compile(r"^\s*-\s*Candidate:|status:\s*staged", re.I)
+
+
+def _unfenced_lines(text):
+    """Yield each line outside ``` fenced code blocks. Memory files legitimately
+    quote injection/control-token examples for reference (e.g. this very file's
+    fixtures) — a naive scan would flag its own documentation."""
+    fenced = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        yield line
+
+
+def s9_poisoning(items):
+    out = []
+    for it in items:
+        tokens_found = set()
+        injection_lines = []
+        staging_lines = []
+        for line in _unfenced_lines(it.text):
+            for tok in CONTROL_TOKENS:
+                if tok in line:
+                    tokens_found.add(tok)
+            if it.kind == "memory_entry" and INJECTION_RE.search(line):
+                injection_lines.append(line.strip())
+            if STAGING_RE.search(line):
+                staging_lines.append(line.strip())
+        if tokens_found:
+            out.append(Finding(
+                rule="S9", severity="high", item_id=it.id,
+                summary=f"[{it.agent}] {it.path.name}: chat-template control token(s) found in "
+                        f"durable memory — {', '.join(sorted(tokens_found))}",
+                evidence="; ".join(sorted(tokens_found)),
+                suggestion="Strip these immediately — control tokens surviving in memory can "
+                           "trigger a self-reinforcing poisoning loop.",
+            ))
+        if injection_lines:
+            quoted = injection_lines[0][:60] + ("…" if len(injection_lines[0]) > 60 else "")
+            out.append(Finding(
+                rule="S9", severity="med", item_id=it.id,
+                summary=f"[{it.agent}] {it.path.name}: instruction-injection-shaped text inside a "
+                        f"memory entry — \"{quoted}\"",
+                evidence="; ".join(injection_lines[:5]),
+                suggestion="Confirm this is a legitimate quoted example and not injected content; "
+                           "delete it or move it into a fenced example if it must be kept.",
+            ))
+        if staging_lines:
+            out.append(Finding(
+                rule="S9", severity="low", item_id=it.id,
+                summary=f"[{it.agent}] {it.path.name}: staging/scaffold marker leaked into memory",
+                evidence="; ".join(staging_lines[:5]),
+                suggestion="Candidate:/status: staged markers belong in a working doc, not durable "
+                           "memory — clean up or promote properly.",
+            ))
+    return out
+
+
 ALL = [s1_load_truncation, s2_dead_references, s3_duplicates,
-       s4_index_orphans, s5_bloat, s6_date_rot, s7_neglect]
+       s4_index_orphans, s5_bloat, s6_date_rot, s7_neglect,
+       s8_rule_density, s9_poisoning]
 
 
 def run_all(items):
