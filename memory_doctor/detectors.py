@@ -45,9 +45,14 @@ def s2_dead_references(items):
             raw = m.group(1).rstrip(".,;:)]}\"'`")
             if any(h in raw for h in SKIP_PATH_HINTS):
                 continue
+            # globs / wildcards aren't checkable; a trailing '-' or '_' is usually a
+            # truncated glob prefix like /root/restart-*.sh (precision lesson, fleet scan #1)
+            if any(c in raw for c in "*?") or raw.endswith(("-", "_")):
+                continue
             p = Path(raw).expanduser()
-            # globs / wildcards aren't checkable
-            if any(c in raw for c in "*?"):
+            # deliberate references to retired/old locations are not rot
+            line = it.text[max(0, it.text.rfind("\n", 0, m.start())):it.text.find("\n", m.end()) if it.text.find("\n", m.end()) != -1 else len(it.text)]
+            if re.search(r"deprecated|retired|old location|migrated|renamed|已迁移|已退役|不再", line, re.I):
                 continue
             if not p.exists():
                 dead.append(raw)
