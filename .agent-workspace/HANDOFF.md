@@ -11,10 +11,13 @@ Make memory-doctor safely resumable by multiple coding agents.
 No active task.
 
 ## Current status
-No checkpoint recorded yet. State below may be stale or incomplete.
+Adopted agentws. REQUIREMENTS.md (mined 2026-07-08, batches A-D) recurring meta-finding: duplicate-merge + stale-prune + contradiction-detection is the independently-named missing core. pytest green (156 tests).
 
 ## Recent changes
-- No checkpoints recorded yet.
+Tracked edits (this task):
+- No tracked edits recorded.
+Untracked (new/scratch):
+- none
 
 ## Decisions to not re-litigate
 # Decisions
@@ -27,11 +30,14 @@ Each entry should be short: what was decided, why, and when.
 - Why: make the repo safely resumable by multiple coding agents (Claude Code, Codex, Gemini).
 
 ## Verification
-- Last test command: unknown
-- Last test result: unknown
+- Last test command: python3 -m pytest tests/ -q
+- Last test result: passed
 
 ## Next best action
-Run `agentws checkpoint` to record the first checkpoint.
+Continue REQUIREMENTS.md graduated backlog (bar: observed >=2x in wild, >=80% precision, in-scope). Core capability trio = duplicate-merge / stale-prune / contradiction-detection. Check the status legend for next not-started (⬜) item.
+
+Pinned files:
+- REQUIREMENTS.md — mined+graduated backlog with ✅/◐/⬜ status legend
 
 ## Blockers / open questions
 - none
