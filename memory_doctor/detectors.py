@@ -5,6 +5,7 @@ Precision discipline: prefer missing a problem over crying wolf — every rule
 here should hold >80% precision on the fixture + fleet golden sets.
 """
 import re
+import time
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -15,10 +16,15 @@ TOKEN_PER_CHAR = 0.4  # rough estimate good enough for bloat profiling
 
 
 # ---------- S1 · load-truncation ----------
+# Generalized (R1): any item whose loaded_portion < 1.0 is a truncation candidate.
+# Wording is driven by kind since each harness's cliff is measured differently
+# (Claude Code auto-memory: 200 lines/25KB; Codex AGENTS.md: 32KB bytes).
 def s1_load_truncation(items):
     out = []
     for it in items:
-        if it.kind == "memory_index" and it.loaded_portion < 1.0:
+        if it.loaded_portion >= 1.0:
+            continue
+        if it.kind == "memory_index":
             total = len(it.text.splitlines())
             lost = total - int(total * it.loaded_portion)
             out.append(Finding(
@@ -28,6 +34,26 @@ def s1_load_truncation(items):
                 evidence=f"loaded_portion={it.loaded_portion:.2f}",
                 suggestion="Move entries below the cliff into per-topic files and keep the index terse, "
                            "or delete stale index lines.",
+            ))
+        elif it.kind == "agents_md":
+            total_b = len(it.text.encode())
+            lost_b = total_b - int(total_b * it.loaded_portion)
+            out.append(Finding(
+                rule="S1", severity="high", item_id=it.id,
+                summary=f"[{it.agent}] {it.path.name} is {total_b:,} bytes; the last {lost_b:,} bytes "
+                        f"({(1-it.loaded_portion):.0%}) silently NEVER load (Codex 32KB limit)",
+                evidence=f"loaded_portion={it.loaded_portion:.2f}",
+                suggestion="Trim AGENTS.md below 32KB, or move detail into a doc the agent reads on demand.",
+            ))
+        else:
+            # unrecognized kind with a reported partial load — flag conservatively,
+            # honest about not knowing the exact cliff semantics for this surface.
+            out.append(Finding(
+                rule="S1", severity="low", item_id=it.id,
+                summary=f"[{it.agent}] {it.path.name}: only {it.loaded_portion:.0%} of this file "
+                        f"reportedly loads",
+                evidence=f"loaded_portion={it.loaded_portion:.2f}",
+                suggestion="Verify this surface's load limit and trim content below it.",
             ))
     return out
 
@@ -190,8 +216,47 @@ def s6_date_rot(items, today=None):
     return out
 
 
+# ---------- S7 · staleness-by-neglect (R15) ----------
+# Pure mtime check: an always-loaded instruction file (rules an agent obeys every
+# session) hasn't been touched in a long time, while the memory layer around it
+# keeps changing — a signal the system is in active use but nobody has revisited
+# whether the old instructions still hold. Requires BOTH conditions to avoid
+# flagging a healthy-but-quiet setup (precision doctrine).
+STALE_INSTRUCTION_DAYS = 90
+ACTIVE_MEMORY_DAYS = 7
+INSTRUCTION_KINDS = ("claude_md", "import", "agents_md")
+
+
+def s7_neglect(items, now=None):
+    now = now if now is not None else time.time()
+    out = []
+    active = any(
+        it.kind == "memory_entry" and it.meta.get("mtime")
+        and (now - it.meta["mtime"]) <= ACTIVE_MEMORY_DAYS * 86400
+        for it in items
+    )
+    if not active:
+        return out
+    for it in items:
+        if it.kind not in INSTRUCTION_KINDS or not it.always_loaded:
+            continue
+        mtime = it.meta.get("mtime")
+        if not mtime:
+            continue
+        age_days = (now - mtime) / 86400
+        if age_days > STALE_INSTRUCTION_DAYS:
+            out.append(Finding(
+                rule="S7", severity="low", item_id=it.id,
+                summary=f"[{it.agent}] {it.path.name} untouched for {int(age_days)}d while memory "
+                        f"keeps changing — re-evaluate whether its rules still hold",
+                evidence=f"mtime age={int(age_days)}d",
+                suggestion="Skim this file: confirm the rules are still accurate, or refresh it.",
+            ))
+    return out
+
+
 ALL = [s1_load_truncation, s2_dead_references, s3_duplicates,
-       s4_index_orphans, s5_bloat, s6_date_rot]
+       s4_index_orphans, s5_bloat, s6_date_rot, s7_neglect]
 
 
 def run_all(items):

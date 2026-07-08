@@ -27,6 +27,13 @@ def _read(p: Path) -> str:
         return ""
 
 
+def _mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except Exception:
+        return 0.0
+
+
 def _loaded_portion_index(text: str) -> float:
     """Fraction of an auto-memory index that survives the 200-line/25KB cliff."""
     lines = text.splitlines(keepends=True)
@@ -54,14 +61,14 @@ def scan(root: Path) -> list[HarnessItem]:
             return
         items.append(HarnessItem(
             id=str(p), path=p, text=text, kind="claude_md",
-            agent=agent, always_loaded=True))
+            agent=agent, always_loaded=True, meta={"mtime": _mtime(p)}))
         # one-hop @imports also always load
         for m in IMPORT_RE.finditer(text):
             ip = Path(m.group(1)).expanduser()
             if ip.exists() and ip.suffix == ".md":
                 items.append(HarnessItem(
                     id=str(ip), path=ip, text=_read(ip), kind="import",
-                    agent=agent, always_loaded=True))
+                    agent=agent, always_loaded=True, meta={"mtime": _mtime(ip)}))
 
     g = root / "CLAUDE.md"
     if g.exists():
@@ -80,11 +87,12 @@ def scan(root: Path) -> list[HarnessItem]:
                 items.append(HarnessItem(
                     id=str(idx), path=idx, text=text, kind="memory_index",
                     agent=agent, always_loaded=True,
-                    loaded_portion=_loaded_portion_index(text)))
+                    loaded_portion=_loaded_portion_index(text),
+                    meta={"mtime": _mtime(idx)}))
             for f in sorted(mem.glob("*.md")):
                 if f.name == "MEMORY.md":
                     continue
                 items.append(HarnessItem(
                     id=str(f), path=f, text=_read(f), kind="memory_entry",
-                    agent=agent, always_loaded=False))
+                    agent=agent, always_loaded=False, meta={"mtime": _mtime(f)}))
     return items

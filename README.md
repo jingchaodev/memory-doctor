@@ -5,7 +5,9 @@
 Your coding agent remembers things. Some of what it remembers is wrong: paths that no longer exist, facts that expired months ago, entries past the load cliff that *silently never enter context*, duplicates drifting apart. Existing tools clean up disk space and tokens; **memory-doctor audits truth**.
 
 ```bash
-python3 -m memory_doctor            # audits ~/.claude — read-only, local, nothing leaves your machine
+python3 -m memory_doctor                 # audits ~/.claude — read-only, local, nothing leaves your machine
+python3 -m memory_doctor --adapter codex # audits ~/.codex/AGENTS.md instead
+python3 -m memory_doctor trace /path/to/project   # what would ACTUALLY load for this cwd
 ```
 
 Real output from the author's own 6-month-old multi-agent setup:
@@ -30,8 +32,21 @@ findings by rule: S2×14, S4×1, S5×1, S6×1
 | **S4 index-orphans** | index↔files mismatch, both directions | unindexed memory is invisible |
 | **S5 bloat profile** | token cost of the always-loaded layer | you pay it every single session |
 | **S6 date-rot** | relative dates ("next week") + year-old facts | meaningless or expired at recall time |
+| **S7 staleness-by-neglect** | an always-loaded instruction file untouched for 90+ days while memory keeps changing | rules nobody has revisited may no longer hold |
 
 Every rule ships with golden fixtures (`fixtures/`, `tests/`) and is precision-tested on a live 4-agent fleet before release. Roadmap: LLM-assisted contradiction detection (opt-in, your own key), and a usage tier that answers *"did this memory ever actually reach a prompt?"* via a local request tap.
+
+### Codex support
+
+`--adapter codex` (or `--adapter all`) reads a Codex `AGENTS.md` and applies the same S1 load-truncation check against Codex's own silent 32KB cutoff — no other flags needed.
+
+### `trace` — what actually loads for a cwd
+
+Claude Code's own discovery-order docs are known to be internally inconsistent (anthropics/claude-code#722). `trace` prints its best current read of the ordered load list for a directory — global CLAUDE.md, the ancestor-dir chain down to your cwd (+ `CLAUDE.local.md`), one-hop `@import`s, and the auto-memory `MEMORY.md` — plus a conservative "suspects" section for nearby files that look load-bearing but wouldn't load from that cwd:
+
+```bash
+python3 -m memory_doctor trace ~/my-project
+```
 
 ## Principles
 
